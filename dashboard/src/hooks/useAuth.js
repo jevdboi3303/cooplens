@@ -7,42 +7,61 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Sync with current session on mount
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session) {
-        localStorage.setItem("cl_token", session.access_token);
-        try {
-          const me = await api.me();
-          setUser(me);
-        } catch {
-          setUser({ email: session.user.email });
-        }
-      }
-      setLoading(false);
-    });
+    let cancelled = false;
 
-    // Keep token fresh on auth state changes
+    async function loadSession() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (cancelled) return;
+
+        if (session?.access_token) {
+          localStorage.setItem("cl_token", session.access_token);
+          try {
+            const me = await api.me();
+            if (!cancelled) setUser(me);
+          } catch {
+            // Backend unreachable or user not registered yet — use Supabase profile
+            if (!cancelled) setUser({ email: session.user.email, id: session.user.id });
+          }
+        }
+      } catch (e) {
+        console.error("Session load error:", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadSession();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (session) {
+        if (cancelled) return;
+
+        if (session?.access_token) {
           localStorage.setItem("cl_token", session.access_token);
-          if (event === "SIGNED_IN") {
+
+          if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
             try { await api.register(); } catch { /* 409 = already registered */ }
             try {
               const me = await api.me();
-              setUser(me);
+              if (!cancelled) setUser(me);
             } catch {
-              setUser({ email: session.user.email });
+              if (!cancelled) setUser({ email: session.user.email, id: session.user.id });
             }
           }
-        } else {
+        } else if (event === "SIGNED_OUT") {
           localStorage.removeItem("cl_token");
-          setUser(null);
+          if (!cancelled) setUser(null);
         }
+
+        if (!cancelled) setLoading(false);
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function signOut() {
