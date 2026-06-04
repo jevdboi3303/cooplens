@@ -1,0 +1,18 @@
+# env files with secrets
+.env
+.env.local
+.env.*.local
+
+# deps
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+
+# build output
+dist/
+build/
+
+# misc
+.DS_Store
+*.log

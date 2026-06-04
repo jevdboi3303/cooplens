@@ -1,0 +1,9 @@
+/* Prevent CoopLens badge styles from leaking into portal styles */
+[data-cl-badge="true"] * {
+  box-sizing: border-box;
+  line-height: 1.4;
+}
+
+.cl-tooltip {
+  line-height: 1.4;
+}

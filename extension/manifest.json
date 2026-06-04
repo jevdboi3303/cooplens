@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "CoopLens",
+  "version": "0.1.0",
+  "description": "Score UVic co-op postings in real time based on your resume.",
+
+  "permissions": ["storage", "identity"],
+  "host_permissions": [
+    "https://learninginmotion.uvic.ca/*",
+    "https://api.cooplens.ca/*",
+    "http://localhost:8000/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://learninginmotion.uvic.ca/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CoopLens"
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

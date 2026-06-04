@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CoopLens Popup Preview</title>
+  <link rel="stylesheet" href="popup.css" />
+  <style>
+    body { display:flex; gap:24px; padding:24px; background:#070707; flex-wrap:wrap; }
+    .frame-label { color:#555; font-family:sans-serif; font-size:11px; margin-bottom:6px; }
+    .frame { border:1px solid #222; border-radius:12px; overflow:hidden; }
+  </style>
+</head>
+<body>
+
+<!-- State: Auth (sign in) -->
+<div>
+  <div class="frame-label">State: auth / sign-in</div>
+  <div class="frame">
+    <div class="popup">
+      <div class="header">
+        <div class="logo">Coop<span>Lens</span></div>
+        <span class="tagline">Score smarter. Apply better.</span>
+      </div>
+      <div class="tab-row">
+        <button class="tab-btn active">Sign in</button>
+        <button class="tab-btn">Sign up</button>
+      </div>
+      <form class="auth-form">
+        <input type="email" placeholder="you@uvic.ca" class="text-input" />
+        <input type="password" placeholder="Password" class="text-input" />
+        <button class="btn-primary" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- State: Auth (sign up) -->
+<div>
+  <div class="frame-label">State: auth / sign-up</div>
+  <div class="frame">
+    <div class="popup">
+      <div class="header">
+        <div class="logo">Coop<span>Lens</span></div>
+        <span class="tagline">Score smarter. Apply better.</span>
+      </div>
+      <div class="tab-row">
+        <button class="tab-btn">Sign in</button>
+        <button class="tab-btn active">Sign up</button>
+      </div>
+      <form class="auth-form">
+        <input type="email" placeholder="you@uvic.ca" class="text-input" />
+        <input type="password" placeholder="Password" class="text-input" />
+        <button class="btn-primary" type="submit">Create account</button>
+      </form>
+      <p class="info-text">Check your email to confirm your account, then sign in.</p>
+    </div>
+  </div>
+</div>
+
+<!-- State: Onboarding (signed in, no resume) -->
+<div>
+  <div class="frame-label">State: onboarding</div>
+  <div class="frame">
+    <div class="popup">
+      <div class="header">
+        <div class="logo">Coop<span>Lens</span></div>
+        <span class="tagline">Score smarter. Apply better.</span>
+      </div>
+      <div class="user-row">
+        <div class="avatar">A</div>
+        <span class="user-email">alice@uvic.ca</span>
+        <button class="sign-out">Sign out</button>
+      </div>
+      <p class="section-label">Upload your resume</p>
+      <div class="upload-area">
+        <div style="font-size:24px">📄</div>
+        <p>Drop your PDF here or click to browse</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- State: Ready (resume uploaded, on portal) -->
+<div>
+  <div class="frame-label">State: ready (on portal)</div>
+  <div class="frame">
+    <div class="popup">
+      <div class="header">
+        <div class="logo">Coop<span>Lens</span></div>
+        <span class="tagline">Score smarter. Apply better.</span>
+      </div>
+      <div class="user-row">
+        <div class="avatar">A</div>
+        <span class="user-email">alice@uvic.ca</span>
+        <button class="sign-out">Sign out</button>
+      </div>
+      <p class="section-label">Resume</p>
+      <div class="resume-row">
+        <span class="resume-icon">📄</span>
+        <div class="resume-info">
+          <div class="resume-name">alice_resume_2025.pdf</div>
+          <div class="resume-sub">14 skills detected</div>
+        </div>
+        <button class="btn-secondary">Replace</button>
+      </div>
+      <div class="status-banner">
+        <div class="status-dot green"></div>
+        <span>Active — scoring postings on this page</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- State: Uploading -->
+<div>
+  <div class="frame-label">State: uploading</div>
+  <div class="frame">
+    <div class="popup">
+      <div class="header">
+        <div class="logo">Coop<span>Lens</span></div>
+        <span class="tagline">Score smarter. Apply better.</span>
+      </div>
+      <div class="user-row">
+        <div class="avatar">A</div>
+        <span class="user-email">alice@uvic.ca</span>
+        <button class="sign-out">Sign out</button>
+      </div>
+      <p class="section-label">Upload your resume</p>
+      <div class="upload-area">
+        <div style="font-size:24px">📄</div>
+        <p>Drop your PDF here or click to browse</p>
+      </div>
+      <div class="status-banner" style="margin-top:10px">
+        <div class="spinner"></div>
+        <span>Uploading &amp; parsing…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
