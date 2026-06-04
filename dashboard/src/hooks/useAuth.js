@@ -9,53 +9,32 @@ export function useAuth() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSession() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (cancelled) return;
-
-        if (session?.access_token) {
-          localStorage.setItem("cl_token", session.access_token);
-          try {
-            const me = await api.me();
-            if (!cancelled) setUser(me);
-          } catch {
-            // Backend unreachable or user not registered yet — use Supabase profile
-            if (!cancelled) setUser({ email: session.user.email, id: session.user.id });
-          }
-        }
-      } catch (e) {
-        console.error("Session load error:", e);
-      } finally {
-        if (!cancelled) setLoading(false);
+    async function syncUser(session) {
+      if (!session) {
+        localStorage.removeItem("cl_token");
+        if (!cancelled) { setUser(null); setLoading(false); }
+        return;
       }
+
+      localStorage.setItem("cl_token", session.access_token);
+
+      // Ensure user exists in our DB
+      try { await api.register(); } catch { /* 409 = already exists, fine */ }
+
+      try {
+        const me = await api.me();
+        if (!cancelled) setUser(me);
+      } catch {
+        // Backend unreachable — fall back to Supabase profile
+        if (!cancelled) setUser({ id: session.user.id, email: session.user.email });
+      }
+
+      if (!cancelled) setLoading(false);
     }
 
-    loadSession();
-
+    // onAuthStateChange fires INITIAL_SESSION on mount (handles page load + OAuth redirect)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (cancelled) return;
-
-        if (session?.access_token) {
-          localStorage.setItem("cl_token", session.access_token);
-
-          if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-            try { await api.register(); } catch { /* 409 = already registered */ }
-            try {
-              const me = await api.me();
-              if (!cancelled) setUser(me);
-            } catch {
-              if (!cancelled) setUser({ email: session.user.email, id: session.user.id });
-            }
-          }
-        } else if (event === "SIGNED_OUT") {
-          localStorage.removeItem("cl_token");
-          if (!cancelled) setUser(null);
-        }
-
-        if (!cancelled) setLoading(false);
-      }
+      (_event, session) => { syncUser(session); }
     );
 
     return () => {
