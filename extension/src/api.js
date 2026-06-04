@@ -4,6 +4,34 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 // ── Supabase auth ────────────────────────────────────────────────────────────
 
+export async function supabaseSignInWithGoogle() {
+  const redirectURL = chrome.identity.getRedirectURL("google");
+  const oauthURL =
+    `${SUPABASE_URL}/auth/v1/authorize?provider=google` +
+    `&redirect_to=${encodeURIComponent(redirectURL)}`;
+
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: oauthURL, interactive: true },
+      (redirectUrl) => {
+        if (chrome.runtime.lastError || !redirectUrl) {
+          reject(new Error(chrome.runtime.lastError?.message || "Auth cancelled"));
+          return;
+        }
+        // Supabase returns tokens in the URL fragment
+        const hash = new URLSearchParams(new URL(redirectUrl).hash.slice(1));
+        const access_token = hash.get("access_token");
+        const refresh_token = hash.get("refresh_token");
+        if (!access_token) {
+          reject(new Error("No access token in response"));
+          return;
+        }
+        resolve({ access_token, refresh_token });
+      }
+    );
+  });
+}
+
 export async function supabaseSignIn(email, password) {
   const res = await fetch(
     `${SUPABASE_URL}/auth/v1/token?grant_type=password`,

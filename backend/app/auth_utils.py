@@ -1,9 +1,10 @@
 import os
-from jose import jwt, JWTError
+import httpx
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
 security = HTTPBearer()
 
@@ -12,15 +13,23 @@ async def verify_token(
     credentials: HTTPAuthorizationCredentials = Security(security),
 ) -> dict:
     token = credentials.credentials
-    if not SUPABASE_JWT_SECRET:
-        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET not configured")
-    try:
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(status_code=500, detail="Supabase env vars not configured")
+
+    async with httpx.AsyncClient(timeout=5) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPABASE_ANON_KEY,
+                "Authorization": f"Bearer {token}",
+            },
         )
-        return payload
-    except JWTError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Supabase rejected token: {resp.status_code} — {resp.text[:200]}"
+        )
+
+    user = resp.json()
+    return {"sub": user["id"], "email": user.get("email", "")}

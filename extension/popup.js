@@ -1,5 +1,5 @@
 import {
-  supabaseSignIn, supabaseSignUp,
+  supabaseSignIn, supabaseSignUp, supabaseSignInWithGoogle,
   getToken, setToken, clearToken,
   getMe, register, uploadResume,
 } from "./src/api.js";
@@ -40,6 +40,20 @@ async function init() {
 }
 
 // ── auth handlers ─────────────────────────────────────────────────────────────
+async function handleGoogleSignIn() {
+  setState({ loading: true, error: null });
+  try {
+    const { access_token } = await supabaseSignInWithGoogle();
+    await setToken(access_token);
+    try { await register(); } catch { /* 409 = already registered */ }
+    const me = await getMe();
+    const { cl_resume } = await getStored(["cl_resume"]);
+    setState({ view: cl_resume ? "ready" : "onboarding", user: me, resume: cl_resume || null, loading: false });
+  } catch (e) {
+    setState({ loading: false, error: e.message });
+  }
+}
+
 async function handleSignIn(email, password) {
   setState({ loading: true, error: null });
   try {
@@ -164,6 +178,22 @@ function renderAuth() {
   });
 
   frag.appendChild(form);
+
+  // Divider
+  const divider = el("div", { className: "divider" }, [
+    el("span", {}, ["or"]),
+  ]);
+  frag.appendChild(divider);
+
+  // Google button
+  const googleBtn = el("button", { className: "btn-google" + (state.loading ? " disabled" : "") }, [
+    el("span", { className: "google-icon" }, ["G"]),
+    "Continue with Google",
+  ]);
+  if (state.loading) googleBtn.setAttribute("disabled", "true");
+  googleBtn.addEventListener("click", handleGoogleSignIn);
+  frag.appendChild(googleBtn);
+
   return frag;
 }
 
@@ -253,4 +283,5 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
-document.addEventListener("DOMContentLoaded", init);
+// Module scripts execute after DOM is ready, so call directly
+init();

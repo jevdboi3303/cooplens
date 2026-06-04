@@ -9,6 +9,16 @@ export function Login() {
   const [error, setError] = useState(null);
   const [info, setInfo] = useState(null);
 
+  async function handleGoogleSignIn() {
+    setLoading(true);
+    setError(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) { setError(error.message); setLoading(false); }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setLoading(true);
@@ -82,7 +92,27 @@ export function Login() {
 
         {error && <p className="text-xs text-red-400 text-center">{error}</p>}
         {info  && <p className="text-xs text-zinc-400 text-center">{info}</p>}
+
+        <div className="flex items-center gap-2 text-zinc-600 text-xs">
+          <div className="flex-1 h-px bg-zinc-800" />
+          <span>or</span>
+          <div className="flex-1 h-px bg-zinc-800" />
+        </div>
+
+        <button
+          onClick={handleGoogleSignIn}
+          className="w-full flex items-center justify-center gap-2.5 bg-white hover:bg-zinc-100 text-zinc-900 font-semibold py-2.5 rounded-lg transition-colors text-sm"
+        >
+          <svg width="16" height="16" viewBox="0 0 48 48">
+            <path fill="#4285F4" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/>
+            <path fill="#34A853" d="M6.3 14.7l7 5.1C15 16.1 19.1 13 24 13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 16.3 2 9.7 7.4 6.3 14.7z"/>
+            <path fill="#FBBC05" d="M24 46c5.5 0 10.5-1.9 14.4-5l-6.7-5.5C29.6 37 26.9 38 24 38c-6 0-10.6-3.9-11.8-9.2l-7 5.4C8.1 41.8 15.5 46 24 46z"/>
+            <path fill="#EA4335" d="M44.5 20H24v8.5h11.8c-.8 2.6-2.4 4.8-4.6 6.3l6.7 5.5C41.8 36.8 45 30.9 45 24c0-1.3-.2-2.7-.5-4z"/>
+          </svg>
+          Continue with Google
+        </button>
       </div>
     </div>
   );
 }
+

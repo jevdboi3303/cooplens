@@ -16,8 +16,7 @@ async function apiFetch(path, options = {}) {
   });
   if (res.status === 401) {
     localStorage.removeItem("cl_token");
-    window.location.href = "/login";
-    return;
+    throw new Error("Unauthorized");
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

@@ -8,25 +8,12 @@ import { Outcomes } from "./pages/Outcomes";
 import { Stats } from "./pages/Stats";
 import { Login } from "./pages/Login";
 
-export default function App() {
-  const { user, loading, signOut } = useAuth();
+function AuthenticatedApp({ user, signOut }) {
   const { outcomes, loading: outcomesLoading, markOffer } = useOutcomes();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-zinc-500 text-sm gap-3">
-        <div className="w-4 h-4 border-2 border-zinc-700 border-t-blue-500 rounded-full animate-spin" />
-        Loading…
-      </div>
-    );
-  }
-
-  if (!user) return <Login />;
 
   return (
     <div className="flex min-h-screen">
       <Sidebar user={user} onSignOut={signOut} />
-
       <main className="flex-1 px-8 py-8 max-w-5xl scrollbar-thin overflow-y-auto">
         {outcomesLoading ? (
           <div className="flex items-center gap-3 text-zinc-500 text-sm mt-20 justify-center">
@@ -45,4 +32,21 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+export default function App() {
+  const { user, loading, signOut } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-zinc-500 text-sm gap-3">
+        <div className="w-4 h-4 border-2 border-zinc-700 border-t-blue-500 rounded-full animate-spin" />
+        Loading…
+      </div>
+    );
+  }
+
+  if (!user) return <Login />;
+
+  return <AuthenticatedApp user={user} signOut={signOut} />;
 }

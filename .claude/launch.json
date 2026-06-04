@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "extension-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "5050", "/Users/hrajeshk/Documents/cooplens/extension"],
+      "port": 5050
+    }
+  ]
+}

@@ -38,3 +38,25 @@ app.include_router(outcomes.router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/token")
+async def debug_token(claims: dict = Depends(app.dependency_overrides.get("verify_token", lambda: None))):
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+    from fastapi import Request
+    return {"claims": "use /auth/me instead"}
+
+
+@app.post("/debug/verify")
+async def debug_verify(request: Request):
+    import httpx, os
+    body = await request.json()
+    token = body.get("token", "")
+    url = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_ANON_KEY", "")
+    async with httpx.AsyncClient(timeout=5) as client:
+        resp = await client.get(
+            f"{url}/auth/v1/user",
+            headers={"apikey": key, "Authorization": f"Bearer {token}"},
+        )
+    return {"status": resp.status_code, "body": resp.json()}
