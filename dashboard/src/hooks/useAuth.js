@@ -9,32 +9,29 @@ export function useAuth() {
   useEffect(() => {
     let cancelled = false;
 
-    async function syncUser(session) {
-      if (!session) {
-        localStorage.removeItem("cl_token");
-        if (!cancelled) { setUser(null); setLoading(false); }
-        return;
-      }
-
-      localStorage.setItem("cl_token", session.access_token);
-
-      // Ensure user exists in our DB
-      try { await api.register(); } catch { /* 409 = already exists, fine */ }
-
-      try {
-        const me = await api.me();
-        if (!cancelled) setUser(me);
-      } catch {
-        // Backend unreachable — fall back to Supabase profile
-        if (!cancelled) setUser({ id: session.user.id, email: session.user.email });
-      }
-
-      if (!cancelled) setLoading(false);
-    }
-
-    // onAuthStateChange fires INITIAL_SESSION on mount (handles page load + OAuth redirect)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => { syncUser(session); }
+      async (_event, session) => {
+        if (cancelled) return;
+
+        if (!session) {
+          localStorage.removeItem("cl_token");
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        // Show dashboard immediately using Supabase session — don't wait for backend
+        localStorage.setItem("cl_token", session.access_token);
+        setUser({ id: session.user.id, email: session.user.email });
+        setLoading(false);
+
+        // Hydrate full user profile from backend in background
+        try { await api.register(); } catch { /* 409 = already registered */ }
+        try {
+          const me = await api.me();
+          if (!cancelled) setUser(me);
+        } catch { /* backend unreachable — Supabase profile is enough */ }
+      }
     );
 
     return () => {
