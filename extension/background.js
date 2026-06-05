@@ -31,16 +31,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === "SCORE_BATCH") {
-    apiFetch("/score/batch", {
-      method: "POST",
-      body: JSON.stringify({ postings: msg.postings }),
-    })
-      .then((data) => sendResponse({ ok: true, data }))
-      .catch((e) => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
-
   if (msg.type === "SCORE_SINGLE") {
     apiFetch("/score/single", {
       method: "POST",
