@@ -21,11 +21,9 @@ from dataclasses import dataclass, field
 from .company_enricher import enrich_company
 from .embedder import embed, cosine_similarity  # TF-IDF fallback
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.0-flash:generateContent?key={key}"
-)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_URL    = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL  = "llama-3.3-70b-versatile"
 
 WEIGHT_CV      = 0.45
 WEIGHT_CLARITY = 0.30
@@ -85,11 +83,11 @@ red_flags examples: "No salary mentioned", "Requires 5+ years (co-op role)", "Ve
 """
 
 
-async def gemini_evaluate(resume_text: str, title: str, company: str, description: str) -> dict | None:
-    if not GEMINI_API_KEY:
+async def llm_evaluate(resume_text: str, title: str, company: str, description: str) -> dict | None:
+    if not GROQ_API_KEY:
         return None
     prompt = EVAL_PROMPT.format(
-        resume_text=resume_text[:3000],  # cap to save tokens
+        resume_text=resume_text[:3000],
         title=title,
         company=company,
         description=description[:4000],
@@ -97,20 +95,21 @@ async def gemini_evaluate(resume_text: str, title: str, company: str, descriptio
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                GEMINI_URL.format(key=GEMINI_API_KEY),
+                GROQ_URL,
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
                 json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+                    "model": GROQ_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 512,
                 },
             )
             resp.raise_for_status()
-            raw = resp.json()
-            text = raw["candidates"][0]["content"]["parts"][0]["text"]
-            # Strip markdown fences if present
+            text = resp.json()["choices"][0]["message"]["content"].strip()
             text = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
             return json.loads(text)
     except Exception as e:
-        print(f"[scorer] Gemini error: {e}")
+        print(f"[scorer] Groq error: {e}")
         return None
 
 
@@ -165,7 +164,7 @@ async def score_posting(
     # Run Gemini eval + company enrichment in parallel
     import asyncio
     gemini_task = asyncio.create_task(
-        gemini_evaluate(resume_text, title, company_name, posting_text)
+        llm_evaluate(resume_text, title, company_name, posting_text)
     )
     company_task = asyncio.create_task(enrich_company(company_name))
 
