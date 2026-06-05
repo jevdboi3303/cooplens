@@ -10,16 +10,8 @@ from app.routers import auth, users, score, outcomes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run DB migrations in a thread so startup doesn't block the healthcheck
-    import asyncio
-    loop = asyncio.get_event_loop()
-    try:
-        await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: Base.metadata.create_all(bind=engine)),
-            timeout=20,
-        )
-    except asyncio.TimeoutError:
-        print("Warning: DB init timed out — tables may already exist")
+    # Tables are created once (locally or via migration) — skip create_all on startup
+    # to avoid blocking uvicorn before it can serve the healthcheck
     yield
 
 
