@@ -10,7 +10,16 @@ from app.routers import auth, users, score, outcomes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    # Run DB migrations in a thread so startup doesn't block the healthcheck
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: Base.metadata.create_all(bind=engine)),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        print("Warning: DB init timed out — tables may already exist")
     yield
 
 
