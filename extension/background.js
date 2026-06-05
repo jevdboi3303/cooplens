@@ -31,6 +31,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "GET_RESUME") {
+    chrome.storage.local.get("cl_resume", (r) => sendResponse({ resume: r.cl_resume || null }));
+    return true;
+  }
+
   if (msg.type === "SCORE_SINGLE") {
     apiFetch("/score/single", {
       method: "POST",

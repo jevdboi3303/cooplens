@@ -1,21 +1,24 @@
 /**
- * CoopLens content script — runs on learninginmotion.uvic.ca
+ * CoopLens content script — detail page scorer
  *
- * Only scores the detail view (when a posting is opened).
- * Table badges removed — they only had title+company context and were misleading.
- *
- * Detail page detected by: no #postingsTable + h1 matches "ID - Title"
- * Description source: .tab-content (full text, ~7000+ chars)
+ * Features:
+ *  - Score panel with 3 signals
+ *  - Keyword gap analysis (resume vs posting skills)
+ *  - Shortlist ★ button
+ *  - Mark Applied ✓ button
+ *  - Quick compare ↔ button
+ *  - "Previously viewed" history note
  */
 
 const CL_PANEL_ID = "cl-detail-panel";
-const scored      = new Map();
 
-// ── auth ─────────────────────────────────────────────────────────────────────
+// ── auth ──────────────────────────────────────────────────────────────────────
 async function getToken() {
-  return new Promise((resolve) =>
-    chrome.runtime.sendMessage({ type: "GET_TOKEN" }, (r) => resolve(r?.token || null))
-  );
+  return new Promise(r => chrome.runtime.sendMessage({ type: "GET_TOKEN" }, res => r(res?.token || null)));
+}
+
+async function getResume() {
+  return new Promise(r => chrome.runtime.sendMessage({ type: "GET_RESUME" }, res => r(res?.resume || null)));
 }
 
 // ── view detection ────────────────────────────────────────────────────────────
@@ -27,24 +30,103 @@ function isDetailView() {
 
 // ── scraping ──────────────────────────────────────────────────────────────────
 function scrapeDetail() {
-  const h1Text     = document.querySelector("h1")?.innerText?.trim() || "";
-  const idMatch    = h1Text.match(/^(\d+)\s*-\s*(.*)/);
-  const posting_id = idMatch?.[1] || "unknown";
-  const title      = idMatch?.[2]?.trim() || h1Text;
-
-  const content    = document.querySelector(".tab-content");
-  const rows       = [...(content?.querySelectorAll("tr") || [])];
-  const orgRow     = rows.find(r => r.innerText.includes("Organization Name"));
+  const h1Text   = document.querySelector("h1")?.innerText?.trim() || "";
+  const idMatch  = h1Text.match(/^(\d+)\s*-\s*(.*)/);
+  const posting_id  = idMatch?.[1] || "unknown";
+  const title    = idMatch?.[2]?.trim() || h1Text;
+  const content  = document.querySelector(".tab-content");
+  const rows     = [...(content?.querySelectorAll("tr") || [])];
+  const orgRow   = rows.find(r => r.innerText.includes("Organization Name"));
   const company_name = orgRow?.querySelector("td:last-child")?.innerText?.trim() || "";
   const description  = content?.innerText?.trim() || title;
-
   return { posting_id, title, company_name, description };
 }
 
-// ── API call via background (avoids mixed-content block) ──────────────────────
+// ── keyword gap analysis ──────────────────────────────────────────────────────
+const SKILL_LIST = [
+  "python","java","javascript","typescript","c++","c#","go","rust","kotlin","swift","r","scala",
+  "react","vue","angular","next.js","node.js","express","django","fastapi","flask","html","css","tailwind",
+  "pandas","numpy","scikit-learn","pytorch","tensorflow","keras","spark","sql","postgresql","mysql",
+  "mongodb","redis","elasticsearch","aws","gcp","azure","docker","kubernetes","terraform",
+  "git","graphql","rest","grpc","kafka","machine learning","deep learning","nlp","data analysis",
+  "linux","bash","ci/cd","agile","scrum","figma","excel","tableau","power bi",
+];
+
+function extractKeywords(text) {
+  const lower = text.toLowerCase();
+  return SKILL_LIST.filter(skill => lower.includes(skill));
+}
+
+function analyzeGap(resumeSkills, postingText) {
+  const postingKeywords = extractKeywords(postingText);
+  const resumeLower = (resumeSkills || []).map(s => s.toLowerCase());
+  const matches = postingKeywords.filter(k => resumeLower.some(r => r.includes(k) || k.includes(r)));
+  const missing = postingKeywords.filter(k => !resumeLower.some(r => r.includes(k) || k.includes(r)));
+  return { postingKeywords, matches, missing };
+}
+
+// ── storage via background ────────────────────────────────────────────────────
+function storageGet(keys) {
+  return new Promise(r => chrome.storage.local.get(keys, r));
+}
+function storageSet(obj) {
+  return new Promise(r => chrome.storage.local.set(obj, r));
+}
+
+async function addToHistory(entry) {
+  const { cl_score_history = [] } = await storageGet("cl_score_history");
+  const updated = [{ ...entry, viewed_at: Date.now() },
+    ...cl_score_history.filter(e => e.posting_id !== entry.posting_id)].slice(0, 50);
+  await storageSet({ cl_score_history: updated });
+}
+
+async function getPreviousView(posting_id) {
+  const { cl_score_history = [] } = await storageGet("cl_score_history");
+  return cl_score_history.find(e => e.posting_id === posting_id) || null;
+}
+
+async function isShortlisted(posting_id) {
+  const { cl_shortlist = [] } = await storageGet("cl_shortlist");
+  return cl_shortlist.some(e => e.posting_id === posting_id);
+}
+
+async function toggleShortlist(entry) {
+  const { cl_shortlist = [] } = await storageGet("cl_shortlist");
+  const exists = cl_shortlist.some(e => e.posting_id === entry.posting_id);
+  const updated = exists
+    ? cl_shortlist.filter(e => e.posting_id !== entry.posting_id)
+    : [{ ...entry, starred_at: Date.now() }, ...cl_shortlist];
+  await storageSet({ cl_shortlist: updated });
+  return !exists;
+}
+
+async function isApplied(posting_id) {
+  const { cl_applied = [] } = await storageGet("cl_applied");
+  return cl_applied.some(e => e.posting_id === posting_id);
+}
+
+async function markApplied(entry) {
+  const { cl_applied = [] } = await storageGet("cl_applied");
+  if (!cl_applied.some(e => e.posting_id === entry.posting_id)) {
+    await storageSet({ cl_applied: [{ ...entry, applied_at: Date.now() }, ...cl_applied] });
+  }
+}
+
+async function toggleCompare(entry) {
+  const { cl_compare = [] } = await storageGet("cl_compare");
+  const exists = cl_compare.some(e => e.posting_id === entry.posting_id);
+  if (!exists && cl_compare.length >= 3) return { added: false, full: true, count: cl_compare.length };
+  const updated = exists
+    ? cl_compare.filter(e => e.posting_id !== entry.posting_id)
+    : [...cl_compare, entry];
+  await storageSet({ cl_compare: updated });
+  return { added: !exists, full: false, count: updated.length };
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
 async function fetchSingleScore(posting) {
   return new Promise((resolve, reject) =>
-    chrome.runtime.sendMessage({ type: "SCORE_SINGLE", posting }, (res) => {
+    chrome.runtime.sendMessage({ type: "SCORE_SINGLE", posting }, res => {
       if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
       if (!res?.ok) return reject(new Error(res?.error || "Score failed"));
       resolve(res.data);
@@ -52,61 +134,183 @@ async function fetchSingleScore(posting) {
   );
 }
 
-// ── score colour ──────────────────────────────────────────────────────────────
+// ── colour helpers ────────────────────────────────────────────────────────────
 function scoreColor(score) {
-  if (score >= 75) return { bg: "#16a34a", label: "Strong" };
-  if (score >= 50) return { bg: "#d97706", label: "Okay" };
-  return { bg: "#dc2626", label: "Weak" };
+  if (score >= 75) return { bg: "#16a34a", text: "#fff", label: "Strong" };
+  if (score >= 50) return { bg: "#d97706", text: "#fff", label: "Okay" };
+  return { bg: "#dc2626", text: "#fff", label: "Weak" };
 }
 
-// ── panel injection ───────────────────────────────────────────────────────────
-function injectDetailPanel(s) {
+function timeAgo(ts) {
+  if (!ts) return "";
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ── panel ─────────────────────────────────────────────────────────────────────
+function injectLoadingPanel(posting_id) {
   document.getElementById(CL_PANEL_ID)?.remove();
-  const { bg, label } = scoreColor(s.score_total);
+  const panel = document.createElement("div");
+  panel.id = CL_PANEL_ID;
+  panel.dataset.postingId = posting_id;
+  panel.style.cssText = `
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:#111;color:#a1a1aa;border-radius:12px;
+    padding:12px 20px;margin:12px 0 16px;
+    border:1px solid #27272a;font-size:13px;
+    display:flex;align-items:center;gap:10px;
+  `;
+  panel.innerHTML = `
+    <div style="width:14px;height:14px;border:2px solid #3f3f46;border-top-color:#3b82f6;
+      border-radius:50%;animation:cl-spin 0.7s linear infinite;flex-shrink:0"></div>
+    CoopLens is scoring this posting…
+    <style>@keyframes cl-spin{to{transform:rotate(360deg)}}</style>
+  `;
+  insertPanel(panel);
+}
+
+async function injectFullPanel(s, detail, resume) {
+  document.getElementById(CL_PANEL_ID)?.remove();
+
+  const { bg, text, label } = scoreColor(s.score_total);
+  const [starred, applied, prevView] = await Promise.all([
+    isShortlisted(detail.posting_id),
+    isApplied(detail.posting_id),
+    getPreviousView(detail.posting_id),
+  ]);
+
+  // Keyword gap
+  const { matches, missing } = analyzeGap(resume?.skills, detail.description);
 
   const panel = document.createElement("div");
   panel.id = CL_PANEL_ID;
+  panel.dataset.postingId = detail.posting_id;
   panel.style.cssText = `
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    background:#111;color:#f4f4f5;border-radius:12px;
+    background:#111;color:#f4f4f5;border-radius:14px;
     padding:16px 20px;margin:12px 0 16px;
-    border:1px solid #27272a;box-shadow:0 4px 16px rgba(0,0,0,0.4);
+    border:1px solid #27272a;
+    box-shadow:0 4px 24px rgba(0,0,0,0.5);
   `;
+
+  // Header row
   panel.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <span style="font-weight:700;font-size:13px;color:#a1a1aa">CoopLens</span>
-      <span style="background:${bg};color:#fff;border-radius:999px;
-        padding:3px 12px;font-size:15px;font-weight:800;">
-        ● ${s.score_total}
-        <span style="font-size:12px;font-weight:500">${label}</span>
+    <style>
+      #cl-detail-panel * { box-sizing:border-box; }
+      @keyframes cl-pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+    </style>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <span style="font-weight:800;font-size:12px;color:#52525b;letter-spacing:.05em">COOPLENS</span>
+      <span id="cl-score-badge" style="background:${bg};color:${text};border-radius:999px;
+        padding:4px 14px;font-size:16px;font-weight:900;letter-spacing:-.3px">
+        ${s.score_total} <span style="font-size:11px;font-weight:500;opacity:.85">${label}</span>
       </span>
+      ${prevView && prevView.viewed_at !== s.viewed_at ? `
+        <span style="font-size:11px;color:#52525b;margin-left:auto">
+          Previously scored ${s.score_total} · ${timeAgo(prevView.viewed_at)}
+        </span>` : ""}
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-      ${detailSignal("Stack match", s.score_stack, "Resume ↔ posting overlap")}
-      ${detailSignal("Company quality", s.score_company, "Size & funding stage")}
-      ${detailSignal("Posting clarity", s.score_clarity, "Salary, bullets, requirements")}
+
+    <!-- Signal cards -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+      ${signalCard("Stack match", s.score_stack, "Resume ↔ posting")}
+      ${signalCard("Company", s.score_company, "Size & funding")}
+      ${signalCard("Clarity", s.score_clarity, "Salary, bullets, reqs")}
+    </div>
+
+    <!-- Keyword gap -->
+    <div style="background:#18181b;border-radius:10px;padding:12px;margin-bottom:12px;border:1px solid #27272a">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#52525b;margin-bottom:8px">
+        Keyword Analysis
+      </div>
+      ${matches.length ? `
+        <div style="margin-bottom:6px">
+          <span style="font-size:10px;color:#22c55e;font-weight:600">✓ Your resume covers</span>
+          <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">
+            ${matches.slice(0,8).map(k => `<span style="background:#14532d;color:#86efac;padding:2px 8px;border-radius:999px;font-size:10px">${k}</span>`).join("")}
+          </div>
+        </div>` : ""}
+      ${missing.length ? `
+        <div>
+          <span style="font-size:10px;color:#f97316;font-weight:600">+ Consider adding</span>
+          <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">
+            ${missing.slice(0,8).map(k => `<span style="background:#431407;color:#fdba74;padding:2px 8px;border-radius:999px;font-size:10px">${k}</span>`).join("")}
+          </div>
+        </div>` : ""}
+      ${!matches.length && !missing.length ? `<span style="font-size:11px;color:#52525b">No specific tech keywords detected in this posting.</span>` : ""}
+    </div>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="cl-btn-star" style="${actionBtnStyle(starred ? "#1e3a5f" : "#18181b", starred ? "#60a5fa" : "#a1a1aa")}">
+        ${starred ? "★ Starred" : "☆ Star"}
+      </button>
+      <button id="cl-btn-apply" style="${actionBtnStyle(applied ? "#14532d" : "#18181b", applied ? "#86efac" : "#a1a1aa")}">
+        ${applied ? "✓ Applied" : "✓ Mark Applied"}
+      </button>
+      <button id="cl-btn-compare" style="${actionBtnStyle("#18181b", "#a1a1aa")}">
+        ↔ Compare
+      </button>
     </div>
   `;
 
-  const h1 = document.querySelector("h1");
-  h1?.parentElement?.insertBefore(panel, h1.nextSibling) || document.body.prepend(panel);
+  insertPanel(panel);
+
+  // Wire buttons
+  panel.querySelector("#cl-btn-star").addEventListener("click", async (e) => {
+    const nowStarred = await toggleShortlist({ ...detail, score_total: s.score_total });
+    e.target.textContent = nowStarred ? "★ Starred" : "☆ Star";
+    e.target.style.background = nowStarred ? "#1e3a5f" : "#18181b";
+    e.target.style.color = nowStarred ? "#60a5fa" : "#a1a1aa";
+  });
+
+  panel.querySelector("#cl-btn-apply").addEventListener("click", async (e) => {
+    await markApplied({ ...detail, score_total: s.score_total });
+    e.target.textContent = "✓ Applied";
+    e.target.style.background = "#14532d";
+    e.target.style.color = "#86efac";
+  });
+
+  panel.querySelector("#cl-btn-compare").addEventListener("click", async (e) => {
+    const { added, full, count } = await toggleCompare({ ...detail, score_total: s.score_total });
+    if (full) { e.target.textContent = "↔ Full (3/3)"; return; }
+    e.target.textContent = added ? `↔ In compare (${count}/3)` : "↔ Compare";
+  });
 }
 
-function detailSignal(label, score, sub) {
+function signalCard(label, score, sub) {
   const { bg } = scoreColor(score);
   return `
-    <div style="background:#18181b;border-radius:8px;padding:10px 12px">
-      <div style="font-size:11px;color:#71717a;margin-bottom:4px">${label}</div>
-      <div style="font-size:20px;font-weight:800;color:#f4f4f5">${score}</div>
-      <div style="height:4px;background:#27272a;border-radius:9999px;margin:6px 0 4px">
-        <div style="height:4px;background:${bg};border-radius:9999px;width:${score}%"></div>
+    <div style="background:#18181b;border-radius:8px;padding:10px 12px;border:1px solid #27272a">
+      <div style="font-size:10px;color:#71717a;margin-bottom:2px">${label}</div>
+      <div style="font-size:22px;font-weight:900;color:#f4f4f5;line-height:1">${score}</div>
+      <div style="height:3px;background:#27272a;border-radius:9999px;margin:5px 0 3px">
+        <div style="height:3px;background:${bg};border-radius:9999px;width:${score}%"></div>
       </div>
-      <div style="font-size:10px;color:#52525b">${sub}</div>
+      <div style="font-size:9px;color:#52525b">${sub}</div>
     </div>
   `;
 }
 
-// ── main scorer ───────────────────────────────────────────────────────────────
+function actionBtnStyle(bg, color) {
+  return `background:${bg};color:${color};border:1px solid #27272a;border-radius:8px;
+    padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;
+    font-family:inherit;transition:all .15s`;
+}
+
+function insertPanel(panel) {
+  const h1 = document.querySelector("h1");
+  if (h1?.parentElement) h1.parentElement.insertBefore(panel, h1.nextSibling);
+  else document.body.prepend(panel);
+}
+
+// ── main ──────────────────────────────────────────────────────────────────────
+const scored = new Map();
+
 async function scoreDetailView() {
   const token = await getToken();
   if (!token) return;
@@ -114,37 +318,33 @@ async function scoreDetailView() {
   const content = document.querySelector(".tab-content");
   if (!content || content.innerText.trim().length < 100) return;
 
-  const { posting_id } = scrapeDetail();
+  const detail = scrapeDetail();
   const existing = document.getElementById(CL_PANEL_ID);
-  if (existing?.dataset.postingId === posting_id) return;
+  if (existing?.dataset.postingId === detail.posting_id) return;
 
-  // Loading state
-  document.getElementById(CL_PANEL_ID)?.remove();
-  const loading = document.createElement("div");
-  loading.id = CL_PANEL_ID;
-  loading.dataset.postingId = posting_id;
-  loading.style.cssText = `
-    font-family:sans-serif;background:#111;color:#a1a1aa;border-radius:12px;
-    padding:12px 20px;margin:12px 0 16px;border:1px solid #27272a;
-    font-size:13px;display:flex;align-items:center;gap:10px;
-  `;
-  loading.innerHTML = `
-    <div style="width:14px;height:14px;border:2px solid #3f3f46;border-top-color:#3b82f6;
-      border-radius:50%;animation:cl-spin 0.7s linear infinite;flex-shrink:0"></div>
-    CoopLens is scoring this posting…
-    <style>@keyframes cl-spin{to{transform:rotate(360deg)}}</style>
-  `;
-  document.querySelector("h1")?.parentElement?.insertBefore(loading, document.querySelector("h1").nextSibling);
+  injectLoadingPanel(detail.posting_id);
 
   try {
-    const result = await fetchSingleScore(scrapeDetail());
-    document.getElementById(CL_PANEL_ID)?.remove();
-    injectDetailPanel(result);
-    document.getElementById(CL_PANEL_ID).dataset.postingId = posting_id;
-    scored.set(posting_id, result);
+    const [result, resume] = await Promise.all([
+      fetchSingleScore(detail),
+      getResume(),
+    ]);
+
+    await addToHistory({
+      posting_id: detail.posting_id,
+      title: detail.title,
+      company_name: detail.company_name,
+      score_total: result.score_total,
+      score_stack: result.score_stack,
+      score_company: result.score_company,
+      score_clarity: result.score_clarity,
+    });
+
+    await injectFullPanel(result, detail, resume);
+    scored.set(detail.posting_id, result);
   } catch (e) {
     document.getElementById(CL_PANEL_ID)?.remove();
-    console.warn("[CoopLens] Detail score failed:", e.message);
+    console.warn("[CoopLens] Score failed:", e.message);
   }
 }
 
@@ -152,7 +352,7 @@ function scoreVisible() {
   if (isDetailView()) scoreDetailView();
 }
 
-// ── observer + start ──────────────────────────────────────────────────────────
+// ── observer ──────────────────────────────────────────────────────────────────
 const observer = new MutationObserver(() => {
   clearTimeout(observer._debounce);
   observer._debounce = setTimeout(scoreVisible, 400);
@@ -163,8 +363,5 @@ function start() {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-if (document.readyState === "complete") {
-  setTimeout(start, 800);
-} else {
-  window.addEventListener("load", () => setTimeout(start, 800));
-}
+if (document.readyState === "complete") setTimeout(start, 800);
+else window.addEventListener("load", () => setTimeout(start, 800));
