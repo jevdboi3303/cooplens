@@ -40,6 +40,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
   }
+
+  if (msg.type === "SCORE_SINGLE") {
+    apiFetch("/score/single", {
+      method: "POST",
+      body: JSON.stringify({ posting: msg.posting }),
+    })
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
 });
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
