@@ -57,6 +57,34 @@ export async function isApplied(posting_id) {
   return cl_applied.some(e => e.posting_id === posting_id);
 }
 
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+export async function addToWatchlist(entry) {
+  const { cl_watchlist = [] } = await get("cl_watchlist");
+  if (cl_watchlist.some(e => e.posting_id === entry.posting_id)) return cl_watchlist;
+  const updated = [{ ...entry, added_at: Date.now() }, ...cl_watchlist];
+  await set({ cl_watchlist: updated });
+  return updated;
+}
+
+export async function removeFromWatchlist(posting_id) {
+  const { cl_watchlist = [] } = await get("cl_watchlist");
+  const updated = cl_watchlist.filter(e => e.posting_id !== posting_id);
+  await set({ cl_watchlist: updated });
+  return updated;
+}
+
+export async function getWatchlist() {
+  const { cl_watchlist = [] } = await get("cl_watchlist");
+  return cl_watchlist;
+}
+
+export function daysUntil(deadline_str) {
+  if (!deadline_str) return null;
+  const d = new Date(deadline_str);
+  if (isNaN(d)) return null;
+  return Math.ceil((d - Date.now()) / 86400000);
+}
+
 // ── Compare list (session, max 3) ─────────────────────────────────────────────
 export async function toggleCompare(entry) {
   const { cl_compare = [] } = await get("cl_compare");

@@ -71,6 +71,21 @@ export async function register(faculty = null) {
   });
 }
 
+export async function updateFaculty(faculty) {
+  return apiFetch("/auth/faculty", {
+    method: "PATCH",
+    body: JSON.stringify({ faculty }),
+  });
+}
+
+export async function getKeywordSuggestions() {
+  return apiFetch("/insights/keyword-suggestions");
+}
+
+export async function getInterviewRate() {
+  return apiFetch("/insights/interview-rate");
+}
+
 export async function uploadResume(file) {
   const token = await getToken();
   const form = new FormData();

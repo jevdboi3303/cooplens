@@ -49,4 +49,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") chrome.action.openPopup?.();
+  // Set up daily deadline check alarm
+  chrome.alarms.create("deadline-check", { periodInMinutes: 360 });
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== "deadline-check") return;
+  const { cl_watchlist = [] } = await chrome.storage.local.get("cl_watchlist");
+  const now = Date.now();
+  for (const item of cl_watchlist) {
+    if (!item.deadline) continue;
+    const days = Math.ceil((new Date(item.deadline) - now) / 86400000);
+    if (days >= 0 && days <= 3) {
+      chrome.notifications.create(`deadline-${item.posting_id}`, {
+        type: "basic",
+        iconUrl: "icons/icon48.png",
+        title: "CoopLens — Deadline approaching!",
+        message: `${item.title} at ${item.company_name} closes in ${days === 0 ? "today" : `${days} day${days > 1 ? "s" : ""}`}`,
+      });
+    }
+  }
 });

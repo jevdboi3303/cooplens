@@ -44,6 +44,20 @@ class ScoreResult:
 
 # ── Gemini evaluation ─────────────────────────────────────────────────────────
 
+FACULTY_HINTS = {
+    "Computer Science":       "Weight programming languages, algorithms, software architecture, and CS fundamentals heavily.",
+    "Software Engineering":   "Weight software development practices, system design, testing, and dev tooling heavily.",
+    "Electrical Engineering": "Weight circuits, embedded systems, FPGA, signal processing, and hardware skills.",
+    "Mechanical Engineering": "Weight CAD, FEA, manufacturing, thermodynamics, and mechanical design.",
+    "Data Science":           "Weight statistics, machine learning, data analysis, Python/R, and SQL heavily.",
+    "Business":               "Weight business analysis, project management, communication, and finance skills.",
+    "Biology":                "Weight research skills, lab techniques, bioinformatics, and life-science domain knowledge.",
+    "Chemistry":              "Weight lab techniques, analytical chemistry, spectroscopy, and research skills.",
+    "Physics":                "Weight mathematical modelling, simulation, research skills, and scientific computing.",
+    "Environmental Science":  "Weight environmental assessment, GIS, field research, and sustainability skills.",
+    "Other":                  "Evaluate broadly across technical and transferable skills.",
+}
+
 EVAL_PROMPT = """You are evaluating a co-op/internship job posting for a university student.
 
 === RESUME ===
@@ -54,6 +68,8 @@ Title: {title}
 Company: {company}
 Description:
 {description}
+
+Faculty context: {faculty_hint}
 
 Evaluate this posting and respond with ONLY valid JSON (no markdown, no explanation):
 
@@ -83,14 +99,16 @@ red_flags examples: "No salary mentioned", "Requires 5+ years (co-op role)", "Ve
 """
 
 
-async def llm_evaluate(resume_text: str, title: str, company: str, description: str) -> dict | None:
+async def llm_evaluate(resume_text: str, title: str, company: str, description: str, faculty: str = "") -> dict | None:
     if not GROQ_API_KEY:
         return None
+    faculty_hint = FACULTY_HINTS.get(faculty, FACULTY_HINTS["Other"])
     prompt = EVAL_PROMPT.format(
         resume_text=resume_text[:3000],
         title=title,
         company=company,
         description=description[:4000],
+        faculty_hint=faculty_hint,
     )
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -159,12 +177,13 @@ async def score_posting(
     company_name: str = "",
     resume_text: str = "",
     resume_embedding: list[float],
+    faculty: str = "",
 ) -> ScoreResult:
 
     # Run Gemini eval + company enrichment in parallel
     import asyncio
     gemini_task = asyncio.create_task(
-        llm_evaluate(resume_text, title, company_name, posting_text)
+        llm_evaluate(resume_text, title, company_name, posting_text, faculty)
     )
     company_task = asyncio.create_task(enrich_company(company_name))
 

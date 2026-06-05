@@ -42,13 +42,16 @@ async def score_single(
     db: Session = Depends(get_db),
     claims: dict = Depends(verify_token),
 ):
+    from ..models import User
     resume = _get_resume(db, claims["sub"])
+    user   = db.get(User, claims["sub"])
     result = await score_posting(
         posting_text=body.posting.description,
         title=body.posting.title,
         company_name=body.posting.company_name,
         resume_text=resume.raw_text or "",
         resume_embedding=resume.embedding,
+        faculty=user.faculty or "" if user else "",
     )
     return {
         "posting_id":    body.posting.posting_id,

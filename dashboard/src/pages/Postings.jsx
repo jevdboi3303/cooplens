@@ -30,9 +30,29 @@ export function Postings({ outcomes }) {
       });
   }, [outcomes, sort, search]);
 
+  function exportCSV() {
+    const headers = ["ID","Title","Company","Score","CV Match","Company Score","Clarity","Recommendation","Date Viewed"];
+    const rows = filtered.map(o => [
+      o.posting_id, o.posting_title, o.company_name,
+      o.score_total, o.score_cv ?? o.score_stack, o.score_company, o.score_clarity,
+      o.recommendation || "",
+      o.recorded_at ? new Date(o.recorded_at).toLocaleDateString() : "",
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v ?? "").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = `cooplens-postings-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-bold">Postings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">Postings</h1>
+        <button onClick={exportCSV} className="text-xs px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">
+          ↓ Export CSV
+        </button>
+      </div>
 
       {/* Controls */}
       <div className="flex gap-3">
@@ -80,7 +100,7 @@ export function Postings({ outcomes }) {
 
               {expanded === o.id && (
                 <div className="px-4 pb-4 space-y-3 border-t border-zinc-800 pt-3">
-                  <SignalBar label="Stack match" value={o.score_stack} />
+                  <SignalBar label="CV Match" value={o.score_cv ?? o.score_stack} />
                   <SignalBar label="Company quality" value={o.score_company} />
                   <SignalBar label="Posting clarity" value={o.score_clarity} />
                 </div>

@@ -30,16 +30,32 @@ function isDetailView() {
 
 // ── scraping ──────────────────────────────────────────────────────────────────
 function scrapeDetail() {
-  const h1Text   = document.querySelector("h1")?.innerText?.trim() || "";
-  const idMatch  = h1Text.match(/^(\d+)\s*-\s*(.*)/);
-  const posting_id  = idMatch?.[1] || "unknown";
-  const title    = idMatch?.[2]?.trim() || h1Text;
-  const content  = document.querySelector(".tab-content");
-  const rows     = [...(content?.querySelectorAll("tr") || [])];
-  const orgRow   = rows.find(r => r.innerText.includes("Organization Name"));
-  const company_name = orgRow?.querySelector("td:last-child")?.innerText?.trim() || "";
-  const description  = content?.innerText?.trim() || title;
-  return { posting_id, title, company_name, description };
+  const h1Text     = document.querySelector("h1")?.innerText?.trim() || "";
+  const idMatch    = h1Text.match(/^(\d+)\s*-\s*(.*)/);
+  const posting_id = idMatch?.[1] || "unknown";
+  const title      = idMatch?.[2]?.trim() || h1Text;
+  const content    = document.querySelector(".tab-content");
+  const rows       = [...(content?.querySelectorAll("tr") || [])];
+
+  const cellVal = (label) => {
+    const row = rows.find(r => r.innerText.includes(label));
+    return row?.querySelector("td:last-child")?.innerText?.trim() || "";
+  };
+
+  const company_name  = cellVal("Organization Name");
+  const division      = cellVal("Division Name");
+  const location      = cellVal("Location") || cellVal("City");
+  const position_type = cellVal("Position Type");
+  const work_term     = cellVal("Co-op Work Term");
+  const description   = content?.innerText?.trim() || title;
+
+  // Extract application deadline
+  const deadlineRow   = rows.find(r => /deadline|closing|application\s+date/i.test(r.innerText));
+  const deadlineRaw   = deadlineRow?.querySelector("td:last-child")?.innerText?.trim() || "";
+  const dateMatch     = description.match(/deadline[:\s]+([A-Za-z]+ \d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2})/i);
+  const deadline      = deadlineRaw || dateMatch?.[1] || "";
+
+  return { posting_id, title, company_name, division, location, position_type, work_term, description, deadline };
 }
 
 // ── keyword gap analysis ──────────────────────────────────────────────────────
@@ -112,6 +128,34 @@ async function markApplied(entry) {
   }
 }
 
+async function addToWatchlist(entry) {
+  const { cl_watchlist = [] } = await storageGet("cl_watchlist");
+  if (cl_watchlist.some(e => e.posting_id === entry.posting_id)) return;
+  await storageSet({ cl_watchlist: [{ ...entry, added_at: Date.now() }, ...cl_watchlist] });
+}
+
+async function isWatchlisted(posting_id) {
+  const { cl_watchlist = [] } = await storageGet("cl_watchlist");
+  return cl_watchlist.some(e => e.posting_id === posting_id);
+}
+
+async function toggleWatchlist(entry) {
+  const { cl_watchlist = [] } = await storageGet("cl_watchlist");
+  const exists = cl_watchlist.some(e => e.posting_id === entry.posting_id);
+  const updated = exists
+    ? cl_watchlist.filter(e => e.posting_id !== entry.posting_id)
+    : [{ ...entry, added_at: Date.now() }, ...cl_watchlist];
+  await storageSet({ cl_watchlist: updated });
+  return !exists;
+}
+
+function daysUntil(deadline) {
+  if (!deadline) return null;
+  const d = new Date(deadline);
+  if (isNaN(d)) return null;
+  return Math.ceil((d - Date.now()) / 86400000);
+}
+
 async function toggleCompare(entry) {
   const { cl_compare = [] } = await storageGet("cl_compare");
   const exists = cl_compare.some(e => e.posting_id === entry.posting_id);
@@ -177,10 +221,11 @@ async function injectFullPanel(s, detail, resume) {
   document.getElementById(CL_PANEL_ID)?.remove();
 
   const { bg, text, label } = scoreColor(s.score_total);
-  const [starred, applied, prevView] = await Promise.all([
+  const [starred, applied, prevView, watchlisted] = await Promise.all([
     isShortlisted(detail.posting_id),
     isApplied(detail.posting_id),
     getPreviousView(detail.posting_id),
+    isWatchlisted(detail.posting_id),
   ]);
 
   // Keyword gap
@@ -259,10 +304,27 @@ async function injectFullPanel(s, detail, resume) {
       ${!matches.length && !missing.length ? `<span style="font-size:11px;color:#52525b">No specific tech keywords detected in this posting.</span>` : ""}
     </div>
 
+    <!-- Company research card -->
+    ${(detail.company_name || detail.division || detail.location) ? `
+    <div style="background:#18181b;border:1px solid #27272a;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#52525b;margin-bottom:6px">Company</div>
+      <div style="font-weight:700;font-size:13px;color:#f4f4f5;margin-bottom:2px">${detail.company_name}</div>
+      ${detail.division ? `<div style="color:#71717a">${detail.division}</div>` : ""}
+      ${detail.location ? `<div style="color:#71717a">📍 ${detail.location}</div>` : ""}
+      ${detail.work_term ? `<div style="color:#71717a;margin-top:4px">📅 ${detail.work_term}</div>` : ""}
+      ${s.company_meta?.size_band ? `<div style="color:#71717a">👥 ${s.company_meta.size_band} employees</div>` : ""}
+      ${detail.deadline ? `<div style="margin-top:6px;font-weight:700;color:${daysUntil(detail.deadline) !== null && daysUntil(detail.deadline) <= 3 ? "#ef4444" : daysUntil(detail.deadline) !== null && daysUntil(detail.deadline) <= 7 ? "#f97316" : "#a1a1aa"}">
+        ⏰ Deadline: ${detail.deadline}${daysUntil(detail.deadline) !== null ? ` (${daysUntil(detail.deadline)} days)` : ""}
+      </div>` : ""}
+    </div>` : ""}
+
     <!-- Action buttons -->
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="cl-btn-star" style="${actionBtnStyle(starred ? "#1e3a5f" : "#18181b", starred ? "#60a5fa" : "#a1a1aa")}">
         ${starred ? "★ Starred" : "☆ Star"}
+      </button>
+      <button id="cl-btn-watch" style="${actionBtnStyle(watchlisted ? "#1c1917" : "#18181b", watchlisted ? "#fbbf24" : "#a1a1aa")}">
+        ${watchlisted ? "🔔 Watching" : "🔔 Watch"}
       </button>
       <button id="cl-btn-apply" style="${actionBtnStyle(applied ? "#14532d" : "#18181b", applied ? "#86efac" : "#a1a1aa")}">
         ${applied ? "✓ Applied" : "✓ Mark Applied"}
@@ -281,6 +343,16 @@ async function injectFullPanel(s, detail, resume) {
     e.target.textContent = nowStarred ? "★ Starred" : "☆ Star";
     e.target.style.background = nowStarred ? "#1e3a5f" : "#18181b";
     e.target.style.color = nowStarred ? "#60a5fa" : "#a1a1aa";
+  });
+
+  panel.querySelector("#cl-btn-watch").addEventListener("click", async (e) => {
+    const nowWatching = await toggleWatchlist({
+      ...detail, score_total: s.score_total,
+      deadline: detail.deadline,
+    });
+    e.target.textContent = nowWatching ? "🔔 Watching" : "🔔 Watch";
+    e.target.style.background = nowWatching ? "#1c1917" : "#18181b";
+    e.target.style.color = nowWatching ? "#fbbf24" : "#a1a1aa";
   });
 
   panel.querySelector("#cl-btn-apply").addEventListener("click", async (e) => {

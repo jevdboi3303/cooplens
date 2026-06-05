@@ -2,12 +2,19 @@ import {
   supabaseSignIn, supabaseSignUp,
   getToken, setToken, clearToken,
   getMe, register, uploadResume,
+  updateFaculty, getKeywordSuggestions, getInterviewRate,
 } from "./src/api.js";
 import {
   get, set, getHistory, getShortlist, getCompare
 } from "./src/storage.js";
 
 // ── state ─────────────────────────────────────────────────────────────────────
+const FACULTIES = [
+  "Computer Science", "Software Engineering", "Electrical Engineering",
+  "Mechanical Engineering", "Data Science", "Business",
+  "Biology", "Chemistry", "Physics", "Environmental Science", "Other",
+];
+
 let state = {
   view: "loading",   // loading | auth | onboarding | dashboard
   authTab: "signin",
@@ -15,9 +22,11 @@ let state = {
   resume: null,
   history: [],
   shortlist: [],
+  watchlist: [],
   compare: [],
   onPortal: false,
-  dashTab: "recent", // recent | shortlist | compare
+  dashTab: "recent", // recent | shortlist | watchlist | compare | insights
+  insights: null,
   error: null,
   info: null,
   loading: false,
@@ -33,8 +42,9 @@ async function init() {
   const { cl_token, cl_resume } = await get(["cl_token", "cl_resume"]);
   if (!cl_token) { setState({ view: "auth" }); return; }
 
-  const [history, shortlist, compare] = await Promise.all([
+  const [history, shortlist, compare, watchlistData] = await Promise.all([
     getHistory(), getShortlist(), getCompare(),
+    get("cl_watchlist").then(r => r.cl_watchlist || []),
   ]);
 
   try {
@@ -42,7 +52,7 @@ async function init() {
     setState({
       view: cl_resume ? "dashboard" : "onboarding",
       user, resume: cl_resume || null,
-      history, shortlist, compare,
+      history, shortlist, compare, watchlist: watchlistData,
     });
     updatePortalStatus();
   } catch {
@@ -264,19 +274,31 @@ function renderDashboard() {
   });
   frag.appendChild(stats);
 
-  // Tab switcher
-  const tabs = el("div", { className: "tab-row" });
-  [["recent", "Recent"], ["shortlist", "★ Starred"], ["compare", `↔ Compare (${state.compare.length})`]].forEach(([key, label]) => {
+  // Tab switcher — two rows of tabs
+  const tabs1 = el("div", { className: "tab-row" });
+  [["recent", "Recent"], ["shortlist", "★ Starred"], ["watchlist", `🔔 Watch (${state.watchlist.length})`]].forEach(([key, label]) => {
     const btn = el("button", { className: `tab-btn${state.dashTab === key ? " active" : ""}` }, [label]);
     btn.addEventListener("click", () => setState({ dashTab: key }));
-    tabs.appendChild(btn);
+    tabs1.appendChild(btn);
   });
-  frag.appendChild(tabs);
+  const tabs2 = el("div", { className: "tab-row", style: "margin-top:4px" });
+  [["compare", `↔ Compare (${state.compare.length})`], ["insights", "💡 Insights"]].forEach(([key, label]) => {
+    const btn = el("button", { className: `tab-btn${state.dashTab === key ? " active" : ""}` }, [label]);
+    btn.addEventListener("click", () => {
+      if (key === "insights" && !state.insights) loadInsights();
+      setState({ dashTab: key });
+    });
+    tabs2.appendChild(btn);
+  });
+  frag.appendChild(tabs1);
+  frag.appendChild(tabs2);
 
   // Tab content
   if (state.dashTab === "recent")    frag.appendChild(renderScoreList(state.history.slice(0, 8), "No postings scored yet.\nOpen a job posting on the portal."));
   if (state.dashTab === "shortlist") frag.appendChild(renderScoreList(state.shortlist, "No starred postings.\nStar a posting from the detail panel."));
+  if (state.dashTab === "watchlist") frag.appendChild(renderWatchlist());
   if (state.dashTab === "compare")   frag.appendChild(renderCompare());
+  if (state.dashTab === "insights")  frag.appendChild(renderInsights());
 
   return frag;
 }
@@ -343,6 +365,138 @@ function renderCompare() {
   wrap.appendChild(list);
   wrap.appendChild(clear);
   return wrap;
+}
+
+// ── Insights loader ───────────────────────────────────────────────────────────
+async function loadInsights() {
+  setState({ insights: { loading: true } });
+  try {
+    const [suggestions, rate] = await Promise.all([
+      getKeywordSuggestions(),
+      getInterviewRate(),
+    ]);
+    setState({ insights: { suggestions, rate } });
+  } catch (e) {
+    setState({ insights: { error: e.message } });
+  }
+}
+
+// ── Watchlist renderer ────────────────────────────────────────────────────────
+function renderWatchlist() {
+  if (!state.watchlist.length) {
+    const wrap = el("div", { className: "empty-state" });
+    wrap.appendChild(el("div", { className: "icon" }, ["🔔"]));
+    wrap.appendChild(el("p", {}, ["No watched postings."]));
+    wrap.appendChild(el("p", {}, ["Click 🔔 Watch on a posting to track its deadline."]));
+    return wrap;
+  }
+  const list = el("div", { className: "score-list" });
+  state.watchlist.forEach(item => {
+    const days = item.deadline ? Math.ceil((new Date(item.deadline) - Date.now()) / 86400000) : null;
+    const { bg, text } = scoreColor(item.score_total);
+    const row = el("div", { className: "score-row" });
+    const badge = el("span", { className: "score-badge" }, [String(item.score_total ?? "?")]);
+    badge.style.background = bg; badge.style.color = text;
+    const info = el("div", { className: "score-info" });
+    info.appendChild(el("div", { className: "score-title" }, [item.title || "Untitled"]));
+    info.appendChild(el("div", { className: "score-company" }, [item.company_name || "—"]));
+    row.appendChild(badge);
+    row.appendChild(info);
+    if (days !== null) {
+      const deadlineEl = el("span", { className: "score-time" }, [
+        days <= 0 ? "Expired" : days === 1 ? "1 day left" : `${days}d left`
+      ]);
+      if (days <= 3) deadlineEl.style.color = "#ef4444";
+      else if (days <= 7) deadlineEl.style.color = "#f97316";
+      row.appendChild(deadlineEl);
+    }
+    list.appendChild(row);
+  });
+  return list;
+}
+
+// ── Insights renderer ─────────────────────────────────────────────────────────
+function renderInsights() {
+  const frag = document.createDocumentFragment();
+
+  // Faculty selector
+  const facultyWrap = el("div", { style: "margin-bottom:10px" });
+  facultyWrap.appendChild(el("p", { className: "section-title" }, ["Your Program"]));
+  const sel = el("select", { className: "text-input", style: "width:100%" });
+  sel.appendChild(el("option", { value: "" }, ["Select your faculty…"]));
+  FACULTIES.forEach(f => {
+    const opt = el("option", { value: f }, [f]);
+    if (state.user?.faculty === f) opt.setAttribute("selected", "true");
+    sel.appendChild(opt);
+  });
+  sel.addEventListener("change", async (e) => {
+    if (!e.target.value) return;
+    try {
+      await updateFaculty(e.target.value);
+      setState({ user: { ...state.user, faculty: e.target.value }, info: `Program set to ${e.target.value}` });
+      loadInsights();
+    } catch {}
+  });
+  facultyWrap.appendChild(sel);
+  frag.appendChild(facultyWrap);
+
+  if (!state.insights) {
+    const btn = el("button", { className: "btn-primary", style: "margin-bottom:10px" }, ["Generate insights"]);
+    btn.addEventListener("click", loadInsights);
+    frag.appendChild(btn);
+    return frag;
+  }
+
+  if (state.insights.loading) {
+    frag.appendChild(el("div", { className: "status-pill" }, [el("div", { className: "spinner" }), el("span", {}, ["Analyzing with Llama 3.3…"])]));
+    return frag;
+  }
+
+  if (state.insights.error) {
+    frag.appendChild(el("p", { className: "error-text" }, [state.insights.error]));
+    return frag;
+  }
+
+  // Keyword suggestions
+  const { suggestions } = state.insights;
+  if (suggestions?.suggestions?.length) {
+    frag.appendChild(el("p", { className: "section-title" }, ["Skills to Add to Your Resume"]));
+    const list = el("div", { className: "score-list" });
+    suggestions.suggestions.forEach(s => {
+      const row = el("div", { className: "score-row" });
+      const pri = el("span", { className: "score-badge" }, [s.priority === "high" ? "🔥" : s.priority === "medium" ? "→" : "~"]);
+      pri.style.background = s.priority === "high" ? "#7c2d12" : s.priority === "medium" ? "#1e3a5f" : "#18181b";
+      pri.style.color = "#fff";
+      const info = el("div", { className: "score-info" });
+      info.appendChild(el("div", { className: "score-title" }, [s.skill]));
+      info.appendChild(el("div", { className: "score-company" }, [s.reason]));
+      row.appendChild(pri);
+      row.appendChild(info);
+      list.appendChild(row);
+    });
+    frag.appendChild(list);
+  }
+
+  // Interview rate
+  const { rate } = state.insights;
+  if (rate?.enough_data) {
+    frag.appendChild(el("p", { className: "section-title", style: "margin-top:10px" }, ["Interview Likelihood"]));
+    const card = el("div", { className: "stat-card", style: "margin-bottom:8px;text-align:left;padding:10px 12px" });
+    card.appendChild(el("div", { className: "stat-value" }, [`${rate.overall_rate}%`]));
+    card.appendChild(el("div", { className: "stat-label" }, ["overall interview rate from your applications"]));
+    if (rate.interview_threshold) {
+      card.appendChild(el("div", { className: "stat-label", style: "margin-top:6px;color:#22c55e" }, [
+        `✓ Postings scoring ${rate.interview_threshold}+ have higher interview rates`
+      ]));
+    }
+    frag.appendChild(card);
+  } else if (rate && !rate.enough_data) {
+    frag.appendChild(el("p", { className: "info-text" }, [
+      `${rate.message} — keep marking outcomes after interviews to unlock predictions.`
+    ]));
+  }
+
+  return frag;
 }
 
 // ── DOM helper ────────────────────────────────────────────────────────────────

@@ -33,6 +33,24 @@ async def register(
     return {"id": sub, "email": email}
 
 
+class FacultyUpdate(BaseModel):
+    faculty: str
+
+
+@router.patch("/faculty")
+async def update_faculty(
+    body: FacultyUpdate,
+    db: Session = Depends(get_db),
+    claims: dict = Depends(verify_token),
+):
+    user = db.get(User, claims["sub"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.faculty = body.faculty
+    db.commit()
+    return {"faculty": user.faculty}
+
+
 @router.get("/me")
 async def me(
     db: Session = Depends(get_db),
