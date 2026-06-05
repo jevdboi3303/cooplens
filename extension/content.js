@@ -155,17 +155,20 @@ async function scoreVisible() {
   const unscoredItems = getUnscored();
   if (!unscoredItems.length) return;
 
-  const postings = unscoredItems.map((i) => i.data);
-
-  let scores;
-  try {
-    scores = await fetchScores(postings);
-  } catch (e) {
-    console.warn("[CoopLens] Score fetch failed:", e.message);
-    return;
+  // Chunk into batches of 50
+  const BATCH_SIZE = 50;
+  const allScores = [];
+  for (let i = 0; i < unscoredItems.length; i += BATCH_SIZE) {
+    const chunk = unscoredItems.slice(i, i + BATCH_SIZE);
+    try {
+      const scores = await fetchScores(chunk.map((c) => c.data));
+      allScores.push(...scores);
+    } catch (e) {
+      console.warn("[CoopLens] Score fetch failed:", e.message);
+    }
   }
 
-  const scoreMap = new Map(scores.map((s) => [s.posting_id, s]));
+  const scoreMap = new Map(allScores.map((s) => [s.posting_id, s]));
   for (const { card, data } of unscoredItems) {
     const s = scoreMap.get(data.posting_id);
     if (s) {
