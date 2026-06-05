@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Score UVic co-op postings in real time based on your resume.",
 
-  "permissions": ["storage", "identity"],
+  "permissions": ["storage"],
   "host_permissions": [
     "https://learninginmotion.uvic.ca/*",
     "https://api.cooplens.ca/*",

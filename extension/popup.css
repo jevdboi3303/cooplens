@@ -246,56 +246,6 @@ body {
 .text-input:focus { border-color: #3b82f6; }
 .text-input::placeholder { color: #4b5563; }
 
-/* ── divider ── */
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 0;
-  color: #4b5563;
-  font-size: 11px;
-}
-.divider::before,
-.divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: #374151;
-}
-
-/* ── google button ── */
-.btn-google {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px;
-  background: #fff;
-  color: #111;
-  border: none;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.btn-google:hover { background: #f3f4f6; }
-.btn-google.disabled { opacity: 0.5; cursor: not-allowed; }
-
-.google-icon {
-  width: 16px;
-  height: 16px;
-  background: #4285F4;
-  color: #fff;
-  border-radius: 2px;
-  font-size: 11px;
-  font-weight: 900;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 /* ── error / info text ── */
 .error-text { font-size: 11px; color: #ef4444; margin-top: 6px; }
 .info-text  { font-size: 11px; color: #6b7280; margin-top: 6px; }
