@@ -7,6 +7,7 @@ import { Postings } from "./pages/Postings";
 import { Outcomes } from "./pages/Outcomes";
 import { Stats } from "./pages/Stats";
 import { Login } from "./pages/Login";
+import { Privacy } from "./pages/Privacy";
 
 function AuthenticatedApp({ user, signOut }) {
   const { outcomes, loading: outcomesLoading, markOffer } = useOutcomes();
@@ -45,6 +46,9 @@ export default function App() {
       </div>
     );
   }
+
+  // Privacy page is public — no auth needed
+  if (window.location.pathname === "/privacy") return <Privacy />;
 
   if (!user) return <Login />;
 
