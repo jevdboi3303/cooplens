@@ -7,7 +7,7 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://learninginmotion.uvic.ca/*",
-    "https://api.cooplens.ca/*",
+    "https://cooplens-production.up.railway.app/*",
     "http://localhost:8000/*"
   ],
 

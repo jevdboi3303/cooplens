@@ -1,7 +1,7 @@
 // Service worker — handles token relay and API fetches for content script
 // (Background can reach http://localhost without mixed-content restrictions)
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://cooplens-production.up.railway.app";
 
 async function apiFetch(path, options = {}) {
   const { cl_token } = await chrome.storage.local.get("cl_token");
