@@ -9,8 +9,6 @@
  *   - No description in table — we compose from title + company + position type + location
  */
 
-const API_BASE = "http://localhost:8000"; // overridden in production build
-
 const CL_ATTR = "data-cl-scored"; // marks cards we've already processed
 const scored = new Map(); // posting_id → ScoreResult
 
@@ -55,19 +53,21 @@ function getUnscored() {
     .filter(({ card, data }) => !card.hasAttribute(CL_ATTR) && data.posting_id.length > 0);
 }
 
-// ── scoring API call ─────────────────────────────────────────────────────────
-async function fetchScores(postings, token) {
-  const res = await fetch(`${API_BASE}/score/batch`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ postings }),
+// ── scoring API call (via background to avoid mixed-content block) ────────────
+async function fetchScores(postings) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: "SCORE_BATCH", postings }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!response?.ok) {
+        reject(new Error(response?.error || "Score request failed"));
+        return;
+      }
+      resolve(response.data.scores);
+    });
   });
-  if (!res.ok) throw new Error(`Score API ${res.status}`);
-  const { scores } = await res.json();
-  return scores; // [{ posting_id, score_total, score_stack, score_company, score_clarity }]
 }
 
 // ── badge injection ──────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ async function scoreVisible() {
 
   let scores;
   try {
-    scores = await fetchScores(postings, token);
+    scores = await fetchScores(postings);
   } catch (e) {
     console.warn("[CoopLens] Score fetch failed:", e.message);
     return;
