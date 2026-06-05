@@ -18,6 +18,7 @@ app = FastAPI(title="CoopLens API", version="0.1.0", lifespan=lifespan)
 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "https://cooplens.vercel.app",
     "https://cooplens.ca",
 ]
 
