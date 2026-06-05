@@ -2,7 +2,7 @@
 
 > AI-powered co-op job scorer for UVic students. Score postings in real time, see red flags, track deadlines, and apply smarter.
 
-![CoopLens Score Panel](https://cooplens.vercel.app/og.png)
+![CoopLens Score Panel](./screenshot.png)
 
 ## What it does
 
