@@ -215,12 +215,27 @@ async function injectFullPanel(s, detail, resume) {
         </span>` : ""}
     </div>
 
+    <!-- Recommendation banner -->
+    ${s.recommendation ? `
+    <div style="margin-bottom:12px;padding:7px 12px;border-radius:8px;font-size:12px;font-weight:700;
+      background:${recBg(s.recommendation)};color:#fff">
+      ${recIcon(s.recommendation)} ${s.recommendation}
+      ${s.role_archetype ? `<span style="font-weight:400;opacity:.8;margin-left:6px">· ${s.role_archetype}</span>` : ""}
+    </div>` : ""}
+
     <!-- Signal cards -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-      ${signalCard("Stack match", s.score_stack, "Resume ↔ posting")}
+      ${signalCard("CV Match", s.score_cv ?? s.score_stack, "Resume ↔ posting")}
       ${signalCard("Company", s.score_company, "Size & funding")}
       ${signalCard("Clarity", s.score_clarity, "Salary, bullets, reqs")}
     </div>
+
+    <!-- Red flags -->
+    ${s.red_flags?.length ? `
+    <div style="background:#1a0a0a;border:1px solid #3f1515;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#ef4444;margin-bottom:6px">⚠ Red Flags</div>
+      ${s.red_flags.map(f => `<div style="font-size:11px;color:#fca5a5;margin-bottom:3px">· ${f}</div>`).join("")}
+    </div>` : ""}
 
     <!-- Keyword gap -->
     <div style="background:#18181b;border-radius:10px;padding:12px;margin-bottom:12px;border:1px solid #27272a">
@@ -280,6 +295,22 @@ async function injectFullPanel(s, detail, resume) {
     if (full) { e.target.textContent = "↔ Full (3/3)"; return; }
     e.target.textContent = added ? `↔ In compare (${count}/3)` : "↔ Compare";
   });
+}
+
+function recBg(rec) {
+  if (!rec) return "#27272a";
+  if (rec.includes("Strong")) return "#16a34a";
+  if (rec.includes("Worth"))  return "#2563eb";
+  if (rec.includes("Maybe"))  return "#d97706";
+  return "#71717a";
+}
+
+function recIcon(rec) {
+  if (!rec) return "";
+  if (rec.includes("Strong")) return "✦";
+  if (rec.includes("Worth"))  return "→";
+  if (rec.includes("Maybe"))  return "~";
+  return "✕";
 }
 
 function signalCard(label, score, sub) {

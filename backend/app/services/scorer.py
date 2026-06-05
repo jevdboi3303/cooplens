@@ -1,140 +1,204 @@
 """
-Scoring pipeline: combines three independent signals into a 0–100 composite.
+Gemini-powered scoring pipeline — inspired by career-ops 6-block evaluation.
 
-    score_stack   — how well the posting's tech stack matches the resume
-    score_company — company quality via Clearbit enrichment
-    score_clarity — posting quality (salary, specificity, length, vague-lang penalty)
+Signals:
+  cv_match      — How well the JD aligns with the resume (skills, experience, proof points)
+  role_clarity  — Posting quality: specificity, salary, requirements, no red flags
+  company       — Company quality via Clearbit (size + funding stage)
 
-Weights: stack 40 %, company 30 %, clarity 30 %
+Weights: cv_match 45%, role_clarity 30%, company 25%
+
+Gemini Flash 2.0 is used for semantic CV↔JD evaluation and red flag detection.
+Falls back to TF-IDF if the API is unavailable.
 """
 
+import os
+import json
 import re
-from dataclasses import dataclass
+import httpx
 
-from .embedder import cosine_similarity, embed
+from dataclasses import dataclass, field
 from .company_enricher import enrich_company
+from .embedder import embed, cosine_similarity  # TF-IDF fallback
 
-# ── clarity heuristics ──────────────────────────────────────────────────────
-
-_SALARY_RE = re.compile(
-    r"(\$[\d,]+|\d[\d,]+\s*(k|K|usd|cad|per\s+hour|/hr|/year))",
-    re.IGNORECASE,
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-2.0-flash:generateContent?key={key}"
 )
 
-_VAGUE_PHRASES = [
-    r"\bfast[\s-]?paced\b",
-    r"\bpassionate\b",
-    r"\brock\s*star\b",
-    r"\bninja\b",
-    r"\bguru\b",
-    r"\bwizard\b",
-    r"\bexcited\b",
-    r"\bteam\s+player\b",
-    r"\bself[\s-]?starter\b",
-    r"\bgo[\s-]getter\b",
-    r"\bsynergy\b",
-    r"\bthought\s+leader\b",
-    r"\bvarious\s+duties\b",
-    r"\bother\s+duties\s+as\s+assigned\b",
-]
-_VAGUE_RE = re.compile("|".join(_VAGUE_PHRASES), re.IGNORECASE)
+WEIGHT_CV      = 0.45
+WEIGHT_CLARITY = 0.30
+WEIGHT_COMPANY = 0.25
 
-_BULLET_RE = re.compile(r"^[\s]*[-•*]\s+.+", re.MULTILINE)
-
-_MIN_WORDS = 80
-_GOOD_WORDS = 250
-_GOOD_BULLETS = 4
-
-
-def _clarity_score(posting_text: str) -> float:
-    score = 0.0
-
-    # Salary presence: +25
-    if _SALARY_RE.search(posting_text):
-        score += 25
-
-    # Word count: up to +30
-    word_count = len(posting_text.split())
-    if word_count >= _GOOD_WORDS:
-        score += 30
-    elif word_count >= _MIN_WORDS:
-        score += 30 * (word_count - _MIN_WORDS) / (_GOOD_WORDS - _MIN_WORDS)
-
-    # Bullet-point specificity: up to +25
-    bullets = len(_BULLET_RE.findall(posting_text))
-    score += min(25, bullets / _GOOD_BULLETS * 25)
-
-    # Requirements section present: +10
-    if re.search(r"\b(requirements?|qualifications?|you (will|should|must))\b",
-                 posting_text, re.IGNORECASE):
-        score += 10
-
-    # Vague language penalty: –5 per hit, max –20
-    vague_hits = len(_VAGUE_RE.findall(posting_text))
-    score -= min(20, vague_hits * 5)
-
-    # Duties-only penalty (no tech stack mentioned): –10
-    tech_terms = re.findall(
-        r"\b(python|java|javascript|sql|react|aws|docker|kubernetes|git|"
-        r"typescript|go|rust|c\+\+)\b",
-        posting_text, re.IGNORECASE,
-    )
-    if not tech_terms:
-        score -= 10
-
-    return max(0.0, min(100.0, score))
-
-
-# ── stack match ──────────────────────────────────────────────────────────────
-
-def _stack_score(resume_embedding: list[float], posting_text: str) -> float:
-    posting_embedding = embed(posting_text)
-    sim = cosine_similarity(resume_embedding, posting_embedding)
-    # cosine similarity in [-1, 1] → map to [0, 100]
-    # In practice embeddings are non-negative after normalize; scale [0.2, 0.8] → [0, 100]
-    normalized = (sim - 0.2) / 0.6
-    return max(0.0, min(100.0, normalized * 100))
-
-
-# ── public API ───────────────────────────────────────────────────────────────
 
 @dataclass
 class ScoreResult:
-    score_stack: float
-    score_company: float
-    score_clarity: float
-    score_total: float
-    company_meta: dict
+    score_total:    float
+    score_cv:       float
+    score_clarity:  float
+    score_company:  float
+    red_flags:      list  = field(default_factory=list)
+    role_archetype: str   = ""
+    recommendation: str   = ""
+    company_meta:   dict  = field(default_factory=dict)
 
 
-WEIGHT_STACK = 0.40
-WEIGHT_COMPANY = 0.30
-WEIGHT_CLARITY = 0.30
+# ── Gemini evaluation ─────────────────────────────────────────────────────────
 
+EVAL_PROMPT = """You are evaluating a co-op/internship job posting for a university student.
+
+=== RESUME ===
+{resume_text}
+
+=== JOB POSTING ===
+Title: {title}
+Company: {company}
+Description:
+{description}
+
+Evaluate this posting and respond with ONLY valid JSON (no markdown, no explanation):
+
+{{
+  "cv_match": <integer 0-100, how well the student's resume matches this posting>,
+  "role_clarity": <integer 0-100, how clear and specific the posting is>,
+  "red_flags": [<list of short strings, each a concern or warning, empty if none>],
+  "role_archetype": <one of: "Software Engineering", "Data/ML", "Research", "DevOps/Cloud", "Design/UX", "Business/Ops", "Other">,
+  "recommendation": <one of: "Strong apply", "Worth applying", "Maybe", "Skip">,
+  "reasoning": <one sentence explaining the cv_match score>
+}}
+
+cv_match scoring guide:
+- 85-100: Resume directly matches required skills and experience level
+- 70-84: Good overlap, 1-2 skill gaps that are learnable
+- 50-69: Partial match, significant gaps but transferable skills exist
+- 30-49: Weak match, different domain but some overlap
+- 0-29: Minimal relevance to the student's background
+
+role_clarity scoring guide:
+- 80-100: Specific tech stack, clear responsibilities, salary mentioned, well-structured
+- 60-79: Good detail but missing some specifics (e.g. no salary)
+- 40-59: Vague responsibilities or generic requirements
+- 0-39: Very generic, no tech stack, boilerplate language
+
+red_flags examples: "No salary mentioned", "Requires 5+ years (co-op role)", "Very vague responsibilities", "No specific tech stack", "Reposted multiple times"
+"""
+
+
+async def gemini_evaluate(resume_text: str, title: str, company: str, description: str) -> dict | None:
+    if not GEMINI_API_KEY:
+        return None
+    prompt = EVAL_PROMPT.format(
+        resume_text=resume_text[:3000],  # cap to save tokens
+        title=title,
+        company=company,
+        description=description[:4000],
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                GEMINI_URL.format(key=GEMINI_API_KEY),
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+                },
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+            text = raw["candidates"][0]["content"]["parts"][0]["text"]
+            # Strip markdown fences if present
+            text = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
+            return json.loads(text)
+    except Exception as e:
+        print(f"[scorer] Gemini error: {e}")
+        return None
+
+
+# ── Clarity heuristics (fallback + supplement) ────────────────────────────────
+
+_SALARY_RE = re.compile(
+    r"(\$[\d,]+|\d[\d,]+\s*(k|K|usd|cad|per\s+hour|/hr|/year|/h\b))",
+    re.IGNORECASE,
+)
+_VAGUE_RE = re.compile(
+    r"\b(fast[\s-]?paced|passionate|rock\s*star|ninja|guru|wizard|"
+    r"synergy|thought\s+leader|other\s+duties\s+as\s+assigned)\b",
+    re.IGNORECASE,
+)
+_BULLET_RE = re.compile(r"^[\s]*[-•*]\s+.+", re.MULTILINE)
+
+
+def _heuristic_clarity(text: str) -> float:
+    score = 0.0
+    if _SALARY_RE.search(text):          score += 25
+    words = len(text.split())
+    score += min(30, 30 * max(0, words - 80) / 170)
+    bullets = len(_BULLET_RE.findall(text))
+    score += min(25, bullets / 4 * 25)
+    if re.search(r"\b(requirements?|qualifications?|you (will|should|must))\b", text, re.I):
+        score += 10
+    score -= min(20, len(_VAGUE_RE.findall(text)) * 5)
+    if not re.search(r"\b(python|java|javascript|sql|react|aws|docker|git|typescript|go|c\+\+)\b", text, re.I):
+        score -= 10
+    return max(0.0, min(100.0, score))
+
+
+# ── TF-IDF fallback for cv_match ──────────────────────────────────────────────
+
+def _tfidf_cv_match(resume_embedding: list[float], posting_text: str) -> float:
+    posting_emb = embed(posting_text)
+    sim = cosine_similarity(resume_embedding, posting_emb)
+    return max(0.0, min(100.0, (sim - 0.2) / 0.6 * 100))
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 async def score_posting(
     *,
     posting_text: str,
-    company_name: str,
+    title: str = "",
+    company_name: str = "",
+    resume_text: str = "",
     resume_embedding: list[float],
 ) -> ScoreResult:
-    s_stack = _stack_score(resume_embedding, posting_text)
-    s_clarity = _clarity_score(posting_text)
 
-    company_meta = await enrich_company(company_name)
+    # Run Gemini eval + company enrichment in parallel
+    import asyncio
+    gemini_task = asyncio.create_task(
+        gemini_evaluate(resume_text, title, company_name, posting_text)
+    )
+    company_task = asyncio.create_task(enrich_company(company_name))
+
+    gemini_result, company_meta = await asyncio.gather(gemini_task, company_task)
+
+    # CV match
+    if gemini_result and "cv_match" in gemini_result:
+        s_cv = float(gemini_result["cv_match"])
+    else:
+        s_cv = _tfidf_cv_match(resume_embedding, posting_text)
+
+    # Role clarity
+    if gemini_result and "role_clarity" in gemini_result:
+        s_clarity = float(gemini_result["role_clarity"])
+    else:
+        s_clarity = _heuristic_clarity(posting_text)
+
     s_company = company_meta["company_score"]
 
     total = round(
-        WEIGHT_STACK * s_stack
-        + WEIGHT_COMPANY * s_company
-        + WEIGHT_CLARITY * s_clarity,
+        WEIGHT_CV * s_cv +
+        WEIGHT_CLARITY * s_clarity +
+        WEIGHT_COMPANY * s_company,
         1,
     )
 
     return ScoreResult(
-        score_stack=round(s_stack, 1),
-        score_company=round(s_company, 1),
-        score_clarity=round(s_clarity, 1),
-        score_total=min(100.0, total),
-        company_meta=company_meta,
+        score_total    = min(100.0, total),
+        score_cv       = round(s_cv, 1),
+        score_clarity  = round(s_clarity, 1),
+        score_company  = round(s_company, 1),
+        red_flags      = gemini_result.get("red_flags", []) if gemini_result else [],
+        role_archetype = gemini_result.get("role_archetype", "") if gemini_result else "",
+        recommendation = gemini_result.get("recommendation", "") if gemini_result else "",
+        company_meta   = company_meta,
     )
