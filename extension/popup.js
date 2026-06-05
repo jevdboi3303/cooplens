@@ -1,5 +1,5 @@
 import {
-  supabaseSignIn, supabaseSignUp, supabaseSignInWithGoogle,
+  supabaseSignIn, supabaseSignUp,
   getToken, setToken, clearToken,
   getMe, register, uploadResume,
 } from "./src/api.js";
@@ -42,16 +42,23 @@ async function init() {
 // ── auth handlers ─────────────────────────────────────────────────────────────
 async function handleGoogleSignIn() {
   setState({ loading: true, error: null });
-  try {
-    const { access_token } = await supabaseSignInWithGoogle();
-    await setToken(access_token);
-    try { await register(); } catch { /* 409 = already registered */ }
-    const me = await getMe();
-    const { cl_resume } = await getStored(["cl_resume"]);
-    setState({ view: cl_resume ? "ready" : "onboarding", user: me, resume: cl_resume || null, loading: false });
-  } catch (e) {
-    setState({ loading: false, error: e.message });
-  }
+  // Delegate to background service worker — it survives popup close
+  chrome.runtime.sendMessage({ type: "GOOGLE_SIGN_IN" }, async (response) => {
+    if (!response || !response.ok) {
+      setState({ loading: false, error: response?.error || "Google sign-in failed" });
+      return;
+    }
+    try {
+      try { await register(); } catch { /* 409 = already registered */ }
+      const me = await getMe();
+      const { cl_resume } = await getStored(["cl_resume"]);
+      setState({ view: cl_resume ? "ready" : "onboarding", user: me, resume: cl_resume || null, loading: false });
+    } catch (e) {
+      setState({ loading: false, error: e.message });
+    }
+  });
+  // Note: popup may close while Google window is open — that's fine.
+  // Background stores the token; popup reads it on next open.
 }
 
 async function handleSignIn(email, password) {
