@@ -4,29 +4,73 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 // ── Supabase auth ────────────────────────────────────────────────────────────
 
+// ── PKCE helpers ─────────────────────────────────────────────────────────────
+
+function generateVerifier(length = 64) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const buf = new Uint8Array(length);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => chars[b % chars.length]).join("");
+}
+
+async function generateChallenge(verifier) {
+  const data = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+// ── Google OAuth via PKCE ────────────────────────────────────────────────────
+
 export async function supabaseSignInWithGoogle() {
   const redirectURL = chrome.identity.getRedirectURL("google");
+  const verifier = generateVerifier();
+  const challenge = await generateChallenge(verifier);
+
   const oauthURL =
     `${SUPABASE_URL}/auth/v1/authorize?provider=google` +
-    `&redirect_to=${encodeURIComponent(redirectURL)}`;
+    `&redirect_to=${encodeURIComponent(redirectURL)}` +
+    `&code_challenge=${encodeURIComponent(challenge)}` +
+    `&code_challenge_method=S256`;
 
   return new Promise((resolve, reject) => {
     chrome.identity.launchWebAuthFlow(
       { url: oauthURL, interactive: true },
-      (redirectUrl) => {
+      async (redirectUrl) => {
         if (chrome.runtime.lastError || !redirectUrl) {
           reject(new Error(chrome.runtime.lastError?.message || "Auth cancelled"));
           return;
         }
-        // Supabase returns tokens in the URL fragment
-        const hash = new URLSearchParams(new URL(redirectUrl).hash.slice(1));
-        const access_token = hash.get("access_token");
-        const refresh_token = hash.get("refresh_token");
-        if (!access_token) {
-          reject(new Error("No access token in response"));
+
+        const url = new URL(redirectUrl);
+        const code = url.searchParams.get("code");
+        if (!code) {
+          reject(new Error("No authorization code in response"));
           return;
         }
-        resolve({ access_token, refresh_token });
+
+        // Exchange code + verifier for tokens
+        try {
+          const resp = await fetch(
+            `${SUPABASE_URL}/auth/v1/token?grant_type=pkce`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "apikey": SUPABASE_ANON_KEY,
+              },
+              body: new URLSearchParams({
+                auth_code: code,
+                code_verifier: verifier,
+              }).toString(),
+            }
+          );
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error_description || data.msg || "Token exchange failed");
+          resolve({ access_token: data.access_token, refresh_token: data.refresh_token });
+        } catch (e) {
+          reject(e);
+        }
       }
     );
   });
