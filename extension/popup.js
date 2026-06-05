@@ -72,8 +72,8 @@ function updatePortalStatus() {
 async function handleSignIn(email, password) {
   setState({ loading: true, error: null });
   try {
-    const { access_token } = await supabaseSignIn(email, password);
-    await setToken(access_token);
+    const { access_token, refresh_token } = await supabaseSignIn(email, password);
+    await setToken(access_token, refresh_token);
     try { await register(); } catch { /* 409 */ }
     const user = await getMe();
     const { cl_resume } = await get("cl_resume");

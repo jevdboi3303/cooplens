@@ -1,15 +1,43 @@
-// Service worker — handles token relay and API fetches for content script
-// (Background can reach http://localhost without mixed-content restrictions)
+// Service worker — handles token relay, auto-refresh, and API fetches
 
-const API_BASE = "https://cooplens-production.up.railway.app";
+const API_BASE      = "https://cooplens-production.up.railway.app";
+const SUPABASE_URL  = "https://qaufwdmqjhospyyecifm.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhdWZ3ZG1xamhvc3B5eWVjaWZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTk3NTUsImV4cCI6MjA5NjE3NTc1NX0.yyLtq_iqdtPxHeZh87DNRZToTqdEcUepCuUYn9uhGrg";
+
+async function getValidToken() {
+  const { cl_token, cl_refresh_token, cl_token_expiry } =
+    await chrome.storage.local.get(["cl_token", "cl_refresh_token", "cl_token_expiry"]);
+
+  if (!cl_refresh_token) return cl_token || null;
+  if (cl_token_expiry && Date.now() < cl_token_expiry) return cl_token;
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON },
+      body: JSON.stringify({ refresh_token: cl_refresh_token }),
+    });
+    if (!res.ok) {
+      await chrome.storage.local.remove(["cl_token", "cl_refresh_token", "cl_token_expiry"]);
+      return null;
+    }
+    const data = await res.json();
+    await chrome.storage.local.set({
+      cl_token: data.access_token,
+      cl_refresh_token: data.refresh_token,
+      cl_token_expiry: Date.now() + 55 * 60 * 1000,
+    });
+    return data.access_token;
+  } catch { return cl_token || null; }
+}
 
 async function apiFetch(path, options = {}) {
-  const { cl_token } = await chrome.storage.local.get("cl_token");
+  const token = await getValidToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      ...(cl_token ? { Authorization: `Bearer ${cl_token}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
   });
@@ -49,11 +77,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") chrome.action.openPopup?.();
-  // Set up daily deadline check alarm
   chrome.alarms.create("deadline-check", { periodInMinutes: 360 });
+  chrome.alarms.create("token-refresh",  { periodInMinutes: 45 });
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === "token-refresh") {
+    await getValidToken(); // silently refreshes if needed
+    return;
+  }
   if (alarm.name !== "deadline-check") return;
   const { cl_watchlist = [] } = await chrome.storage.local.get("cl_watchlist");
   const now = Date.now();

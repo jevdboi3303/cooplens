@@ -37,18 +37,50 @@ export function getToken() {
   );
 }
 
-export function setToken(token) {
-  return new Promise((resolve) => chrome.storage.local.set({ cl_token: token }, resolve));
+export function setToken(access_token, refresh_token = null) {
+  const data = { cl_token: access_token };
+  if (refresh_token) data.cl_refresh_token = refresh_token;
+  // Store expiry 55 minutes from now (tokens last 1 hour)
+  data.cl_token_expiry = Date.now() + 55 * 60 * 1000;
+  return new Promise((resolve) => chrome.storage.local.set(data, resolve));
 }
 
 export function clearToken() {
-  return new Promise((resolve) => chrome.storage.local.remove(["cl_token", "cl_resume"], resolve));
+  return new Promise((resolve) =>
+    chrome.storage.local.remove(["cl_token", "cl_refresh_token", "cl_token_expiry", "cl_resume"], resolve)
+  );
+}
+
+export async function refreshTokenIfNeeded() {
+  const { cl_token, cl_refresh_token, cl_token_expiry } = await new Promise(r =>
+    chrome.storage.local.get(["cl_token", "cl_refresh_token", "cl_token_expiry"], r)
+  );
+  if (!cl_refresh_token) return cl_token || null;
+  // Refresh if within 5 minutes of expiry or already expired
+  if (cl_token_expiry && Date.now() < cl_token_expiry) return cl_token;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY },
+        body: JSON.stringify({ refresh_token: cl_refresh_token }),
+      }
+    );
+    if (!res.ok) { await clearToken(); return null; }
+    const data = await res.json();
+    await setToken(data.access_token, data.refresh_token);
+    return data.access_token;
+  } catch {
+    return cl_token || null;
+  }
 }
 
 // ── CoopLens API ─────────────────────────────────────────────────────────────
 
 async function apiFetch(path, options = {}) {
-  const token = await getToken();
+  const token = await refreshTokenIfNeeded();
   const headers = {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
